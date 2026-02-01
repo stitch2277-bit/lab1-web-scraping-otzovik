@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class OtzovikScraper:
     """Парсер отзывов с сайта otzovik.com"""
     
-    def __init__(self, base_url, output_dir='dataset', pages_per_rating=3):
+    def __init__(self, base_url, output_dir='dataset', pages_per_rating=13):
         self.base_url = base_url
         self.output_dir = output_dir
         self.pages_per_rating = pages_per_rating
@@ -75,7 +75,7 @@ class OtzovikScraper:
         
         try:
             delay = random.uniform(10.0, 12.0)
-            logger.info(" Ожидание %.1f секунд...", delay)
+            logger.info("⏳ Ожидание %.1f секунд...", delay)
             time.sleep(delay)
             
             response = requests.get(url, headers=headers, timeout=30)
@@ -116,10 +116,10 @@ class OtzovikScraper:
             soup = BeautifulSoup(html, 'html.parser')
             reviews = []
             
-            # Находим все блоки отзывов по классам status4 и status10
-            review_blocks = soup.find_all('div', class_=['status4', 'status10'])
+            # Находим все блоки отзывов по классам
+            review_blocks = soup.find_all('div', class_=['item status4', 'item status10'])
             
-            # Если не найдено, ищем по классу 'item' с атрибутами
+            # Альтернативный поиск
             if not review_blocks:
                 all_items = soup.find_all('div', class_='item')
                 review_blocks = [item for item in all_items if 'status4' in item.get('class', []) or 'status10' in item.get('class', [])]
@@ -128,24 +128,23 @@ class OtzovikScraper:
             
             for block in review_blocks:
                 try:
-                    # Получаем рейтинг из элемента с классом 'rating-score'
+                    # Получаем рейтинг
                     rating_elem = block.find('div', class_='rating-score')
                     if rating_elem:
                         rating_text = rating_elem.get_text(strip=True)
-                        # Извлекаем только цифру из текста (например, "1" из "1")
-                        rating = int(''.join(filter(str.isdigit, rating_text.split('/')[0]))) if rating_text else None
+                        rating = int(''.join(filter(str.isdigit, rating_text))) if rating_text else None
                     else:
                         rating = None
                     
-                    # Получаем заголовок отзыва
+                    # Получаем заголовок
                     title_elem = block.find('a', class_='review-title')
                     title = title_elem.get_text(strip=True) if title_elem else "Без названия"
                     
-                    # Получаем краткий текст отзыва
+                    # Получаем краткий текст
                     teaser_elem = block.find('div', class_='review-teaser')
                     teaser = teaser_elem.get_text(strip=True) if teaser_elem else "Текст отзыва отсутствует"
                     
-                    # Получаем дату отзыва
+                    # Получаем дату
                     date_elem = block.find('div', class_='review-postdate')
                     date = date_elem.get_text(strip=True) if date_elem else "Дата не указана"
                     
@@ -242,13 +241,13 @@ class OtzovikScraper:
         
         all_reviews = []
         
-        for page_num in range(1, self.pages_per_rating + 1):
+        for page_num in tqdm(range(1, self.pages_per_rating + 1), desc=f"Рейтинг {rating_value}", unit="стр"):
             if page_num == 1:
                 url = f"{self.base_url}?ratio={rating_value}"
             else:
                 url = f"{self.base_url}{page_num}/?ratio={rating_value}"
             
-            logger.info(" Страница %d/%d: %s", page_num, self.pages_per_rating, url)
+            logger.info("📄 Страница %d/%d: %s", page_num, self.pages_per_rating, url)
             
             html = self.fetch_page(url)
             
@@ -278,30 +277,30 @@ class OtzovikScraper:
         for rating in range(1, 6):
             reviews = self.scrape_reviews_by_rating(rating)
             all_reviews_by_rating[rating] = reviews
-            logger.info(" Рейтинг %d: собрано %d отзывов", rating, len(reviews))
+            logger.info("📊 Рейтинг %d: собрано %d отзывов", rating, len(reviews))
         
         total_collected = sum(len(reviews) for reviews in all_reviews_by_rating.values())
-        logger.info("\n Всего собрано отзывов: %d", total_collected)
+        logger.info("\n📊 Всего собрано отзывов: %d", total_collected)
         
-        logger.info("\n Сохранение отзывов в файлы...")
+        logger.info("\n💾 Сохранение отзывов в файлы...")
         
         for rating, reviews in all_reviews_by_rating.items():
             logger.info("\nРейтинг %d звезд - сохранение...", rating)
             
-            for i, review in enumerate(tqdm(reviews, desc=f"Рейтинг {rating}"), start=1):
+            for i, review in enumerate(tqdm(reviews, desc=f"Сохранение {rating}"), start=1):
                 self.save_review_to_file(review, rating, i)
         
         logger.info("\n" + "="*60)
-        logger.info(" ЗАВЕРШЕНО!")
+        logger.info("✅ ЗАВЕРШЕНО!")
         logger.info("="*60)
-        logger.info(" Файлы сохранены в папку: %s/", self.output_dir)
-        logger.info(" Всего собрано: %d отзывов", self.stats['total_reviews'])
-        logger.info(" Успешно сохранено: %d отзывов", self.stats['saved_reviews'])
-        logger.info(" Ошибок: %d", self.stats['errors'])
+        logger.info("📁 Файлы сохранены в папку: %s/", self.output_dir)
+        logger.info("📄 Всего собрано: %d отзывов", self.stats['total_reviews'])
+        logger.info("📄 Успешно сохранено: %d отзывов", self.stats['saved_reviews'])
+        logger.info("📄 Ошибок: %d", self.stats['errors'])
         if self.stats['total_reviews'] > 0:
             success_rate = (self.stats['saved_reviews'] / self.stats['total_reviews']) * 100
-            logger.info(" Процент успеха: %.1f%%", success_rate)
-        logger.info(" Лог сохранен в файл: scraper.log")
+            logger.info("📊 Процент успеха: %.1f%%", success_rate)
+        logger.info("📄 Лог сохранен в файл: scraper.log")
         logger.info("="*60)
 
 
@@ -311,7 +310,7 @@ def main():
     scraper = OtzovikScraper(
         base_url=base_url,
         output_dir='dataset',
-        pages_per_rating=3
+        pages_per_rating=13  # 13 страниц × ~40 отзывов = ~520 отзывов на каждый рейтинг
     )
     
     scraper.run()
