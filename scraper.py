@@ -19,14 +19,17 @@ logger = logging.getLogger(__name__)
 class OtzovikScraper:
     """Парсер отзывов с сайта otzovik.com"""
     
-    def __init__(self, base_url, output_dir='dataset', pages_per_rating=13):
+    def __init__(self, base_url, output_dir='dataset2', pages_per_rating=2, max_reviews_per_rating=100):
         self.base_url = base_url
         self.output_dir = output_dir
         self.pages_per_rating = pages_per_rating
+        self.max_reviews_per_rating = max_reviews_per_rating
         self.stats = {
             'total_reviews': 0,
             'saved_reviews': 0,
-            'errors': 0
+            'errors': 0,
+            'start_time': None,
+            'end_time': None
         }
     
     def create_directory_structure(self):
@@ -34,19 +37,19 @@ class OtzovikScraper:
         try:
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir)
-                logger.info("✓ Создана папка: %s", self.output_dir)
+                logger.info("Создана папка: %s", self.output_dir)
             
             for rating in range(1, 6):
                 rating_dir = os.path.join(self.output_dir, str(rating))
                 if not os.path.exists(rating_dir):
                     os.makedirs(rating_dir)
-                    logger.info("✓ Создана папка: %s", rating_dir)
+                    logger.info("Создана папка: %s", rating_dir)
             
-            logger.info("✓ Структура папок создана успешно")
+            logger.info("Структура папок создана успешно")
             return True
         
         except Exception as e:
-            logger.error("✗ Ошибка при создании структуры папок: %s", e)
+            logger.error("Ошибка при создании структуры папок: %s", e)
             return False
     
     def fetch_page(self, url, attempt=1, max_attempts=3):
@@ -54,7 +57,7 @@ class OtzovikScraper:
         logger.info("Получение страницы: %s (попытка %d/%d)", url, attempt, max_attempts)
         
         if attempt > max_attempts:
-            logger.error("✗ Превышено максимальное количество попыток")
+            logger.error("Превышено максимальное количество попыток")
             return None
         
         user_agents = [
@@ -75,48 +78,48 @@ class OtzovikScraper:
         
         try:
             delay = random.uniform(10.0, 12.0)
-            logger.info("⏳ Ожидание %.1f секунд...", delay)
+            logger.info("Ожидание %.1f секунд...", delay)
             time.sleep(delay)
             
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             
             if 'captcha' in response.text.lower() or 'доступ запрещен' in response.text.lower():
-                logger.warning("⚠ Обнаружена защита от парсинга")
+                logger.warning("Обнаружена защита от парсинга")
                 if attempt < max_attempts:
                     time.sleep(15)
                     return self.fetch_page(url, attempt + 1, max_attempts)
                 return None
             
-            logger.info("✓ Страница успешно загружена")
+            logger.info("Страница успешно загружена")
             return response.text
         
         except requests.exceptions.HTTPError as e:
-            logger.error("✗ HTTP ошибка %s: %s", e.response.status_code, e)
+            logger.error("HTTP ошибка %s: %s", e.response.status_code, e)
             return None
         
         except requests.exceptions.Timeout:
-            logger.warning("⚠ Таймаут запроса")
+            logger.warning("Таймаут запроса")
             if attempt < max_attempts:
                 time.sleep(5)
                 return self.fetch_page(url, attempt + 1, max_attempts)
             return None
         
         except requests.exceptions.RequestException as e:
-            logger.error("✗ Ошибка запроса: %s", e)
+            logger.error("Ошибка запроса: %s", e)
             return None
     
     def parse_reviews_from_page(self, html):
         """Парсинг отзывов из HTML страницы"""
         if not html:
-            logger.error("✗ Нет данных для парсинга")
+            logger.error("Нет данных для парсинга")
             return []
         
         try:
             soup = BeautifulSoup(html, 'html.parser')
             reviews = []
             
-            # Находим все блоки отзывов по классам
+            # Находим все блоки отзывов
             review_blocks = soup.find_all('div', class_=['item status4', 'item status10'])
             
             # Альтернативный поиск
@@ -152,12 +155,12 @@ class OtzovikScraper:
                     author_elem = block.find('span', itemprop='name')
                     author = author_elem.get_text(strip=True) if author_elem else "Аноним"
                     
-                    # Получаем ссылку на полный отзыв
+                    # Получаем ссылку на полный отзыв (ИСПРАВЛЕНО: убраны лишние пробелы)
                     link_elem = block.find('a', class_='review-title')
                     link = link_elem['href'] if link_elem and 'href' in link_elem.attrs else ""
                     
                     if link and not link.startswith('http'):
-                        link = f"https://otzovik.com{link}"
+                        link = f"https://otzovik.com{link}"  # Исправлено: без пробелов
                     
                     # Формируем данные отзыва
                     review_data = {
@@ -171,10 +174,10 @@ class OtzovikScraper:
                     }
                     
                     reviews.append(review_data)
-                    logger.debug("✓ Отзыв: %s... (Рейтинг: %s)", title[:30], rating)
+                    logger.debug("Отзыв: %s... (Рейтинг: %s)", title[:30], rating)
                     
                 except Exception as e:
-                    logger.warning("⚠ Ошибка при парсинге отзыва: %s", e)
+                    logger.warning("Ошибка при парсинге отзыва: %s", e)
                     self.stats['errors'] += 1
                     continue
             
@@ -182,25 +185,25 @@ class OtzovikScraper:
             return reviews
         
         except Exception as e:
-            logger.error("✗ Ошибка при парсинге: %s", e)
+            logger.error("Ошибка при парсинге: %s", e)
             return []
     
     def save_review_to_file(self, review, rating, review_number):
-        """Сохранение отзыва в файл с ведущими нулями"""
+        """Сохранение отзыва в файл с ведущими нулями (ИСПРАВЛЕНО: обработка None)"""
         if not isinstance(rating, int) or rating < 1 or rating > 5:
-            logger.warning("⚠ Пропущен отзыв #%d с некорректным рейтингом: %s", review_number, rating)
+            logger.warning("Пропущен отзыв #%d с некорректным рейтингом: %s", review_number, rating)
             return False
         
         filename = f"{review_number:04d}.txt"
         filepath = os.path.join(self.output_dir, str(rating), filename)
         
         try:
-            # Обеспечиваем, что текст отзыва не будет None
-            text_to_save = review.get('full_text') or review.get('teaser') or "Текст отзыва отсутствует"
-            title = review.get('title', 'Без названия')
-            author = review.get('author', 'Аноним')
-            date = review.get('date', 'Дата не указана')
-            link = review.get('link', '')
+            # Гарантируем, что все поля - строки (ИСПРАВЛЕНО)
+            text_to_save = str(review.get('full_text') or review.get('teaser') or "Текст отзыва отсутствует")
+            title = str(review.get('title', 'Без названия'))
+            author = str(review.get('author', 'Аноним'))
+            date = str(review.get('date', 'Дата не указана'))
+            link = str(review.get('link', ''))
             
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write("="*60 + "\n")
@@ -220,16 +223,16 @@ class OtzovikScraper:
                 f.write("="*60 + "\n")
             
             self.stats['saved_reviews'] += 1
-            logger.info("✓ Сохранен: %s", filepath)
+            logger.info("Сохранен: %s", filepath)
             return True
         
         except PermissionError:
-            logger.error("✗ Ошибка доступа к файлу: %s", filepath)
+            logger.error("Ошибка доступа к файлу: %s", filepath)
             self.stats['errors'] += 1
             return False
         
         except Exception as e:
-            logger.error("✗ Ошибка при сохранении файла %s: %s", filepath, e)
+            logger.error("Ошибка при сохранении файла %s: %s", filepath, e)
             self.stats['errors'] += 1
             return False
     
@@ -247,7 +250,7 @@ class OtzovikScraper:
             else:
                 url = f"{self.base_url}{page_num}/?ratio={rating_value}"
             
-            logger.info("📄 Страница %d/%d: %s", page_num, self.pages_per_rating, url)
+            logger.info("Страница %d/%d: %s", page_num, self.pages_per_rating, url)
             
             html = self.fetch_page(url)
             
@@ -258,18 +261,25 @@ class OtzovikScraper:
             
             if page_num < self.pages_per_rating:
                 time.sleep(random.uniform(8.0, 10.0))
+            
+            # Ограничиваем количество отзывов
+            if len(all_reviews) >= self.max_reviews_per_rating:
+                logger.info("Достигнуто ограничение в %d отзывов для рейтинга %d", self.max_reviews_per_rating, rating_value)
+                break
         
-        return all_reviews
+        return all_reviews[:self.max_reviews_per_rating]
     
     def run(self):
         """Запуск парсинга"""
+        self.stats['start_time'] = time.time()
+        
         logger.info("="*60)
         logger.info("Web-Scraper для otzovik.com")
         logger.info("Парсинг отзывов о Сбербанке")
         logger.info("="*60)
         
         if not self.create_directory_structure():
-            logger.error("✗ Не удалось создать структуру папок")
+            logger.error("Не удалось создать структуру папок")
             return
         
         all_reviews_by_rating = {}
@@ -277,12 +287,12 @@ class OtzovikScraper:
         for rating in range(1, 6):
             reviews = self.scrape_reviews_by_rating(rating)
             all_reviews_by_rating[rating] = reviews
-            logger.info("📊 Рейтинг %d: собрано %d отзывов", rating, len(reviews))
+            logger.info("Рейтинг %d: собрано %d отзывов", rating, len(reviews))
         
         total_collected = sum(len(reviews) for reviews in all_reviews_by_rating.values())
-        logger.info("\n📊 Всего собрано отзывов: %d", total_collected)
+        logger.info("\nВсего собрано отзывов: %d", total_collected)
         
-        logger.info("\n💾 Сохранение отзывов в файлы...")
+        logger.info("\nСохранение отзывов в файлы...")
         
         for rating, reviews in all_reviews_by_rating.items():
             logger.info("\nРейтинг %d звезд - сохранение...", rating)
@@ -290,17 +300,21 @@ class OtzovikScraper:
             for i, review in enumerate(tqdm(reviews, desc=f"Сохранение {rating}"), start=1):
                 self.save_review_to_file(review, rating, i)
         
+        self.stats['end_time'] = time.time()
+        total_time = self.stats['end_time'] - self.stats['start_time']
+        
         logger.info("\n" + "="*60)
-        logger.info("✅ ЗАВЕРШЕНО!")
+        logger.info("ЗАВЕРШЕНО!")
         logger.info("="*60)
-        logger.info("📁 Файлы сохранены в папку: %s/", self.output_dir)
-        logger.info("📄 Всего собрано: %d отзывов", self.stats['total_reviews'])
-        logger.info("📄 Успешно сохранено: %d отзывов", self.stats['saved_reviews'])
-        logger.info("📄 Ошибок: %d", self.stats['errors'])
+        logger.info("Файлы сохранены в папку: %s/", self.output_dir)
+        logger.info("Всего собрано: %d отзывов", self.stats['total_reviews'])
+        logger.info("Успешно сохранено: %d отзывов", self.stats['saved_reviews'])
+        logger.info("Ошибок: %d", self.stats['errors'])
         if self.stats['total_reviews'] > 0:
             success_rate = (self.stats['saved_reviews'] / self.stats['total_reviews']) * 100
-            logger.info("📊 Процент успеха: %.1f%%", success_rate)
-        logger.info("📄 Лог сохранен в файл: scraper.log")
+            logger.info("Процент успеха: %.1f%%", success_rate)
+        logger.info("Общее время выполнения: %.2f секунд (%.1f минут)", total_time, total_time / 60)
+        logger.info("Лог сохранен в файл: scraper.log")
         logger.info("="*60)
 
 
@@ -309,8 +323,9 @@ def main():
     
     scraper = OtzovikScraper(
         base_url=base_url,
-        output_dir='dataset',
-        pages_per_rating=13  # 13 страниц × ~40 отзывов = ~520 отзывов на каждый рейтинг
+        output_dir='dataset2', 
+        pages_per_rating=2,     
+        max_reviews_per_rating=100
     )
     
     scraper.run()
